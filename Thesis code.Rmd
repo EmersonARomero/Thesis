@@ -1,0 +1,1520 @@
+```{r}
+library(readr)
+library(ggplot2)
+library(car)
+library(MASS)
+library(reshape2)
+library(haven)
+library(ggsignif)
+library(palmerpenguins)
+library(tidyverse)
+library(dplyr)
+library(scales)
+library(ggrepel)
+library(zoo)
+library(grid)
+```
+
+```{r}
+LAPOP_2019 <- read_dta("https://github.com/EmersonARomero/Thesis/raw/refs/heads/main/Peru%20LAPOP%20AmericasBarometer%202019%20v1.0_W.dta") #Replace with corresponding dta file
+LAPOP_2021 <- read_dta("https://github.com/EmersonARomero/Thesis/raw/refs/heads/main/PER_2021_LAPOP_AmericasBarometer_v1.2_w.dta") #Replace with corresponding dta file
+LAPOP_2023 <- read_dta("https://github.com/EmersonARomero/Thesis/raw/refs/heads/main/PER_2023_LAPOP_AmericasBarometer_v1.0_w.dta") #Replace with corresponding dta file
+```
+
+```{r}
+#Creating a table to plot long trends of trust in elections' evolution
+
+electiontr_year <- c(2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023)
+electiontr_perc <- c(0.4572, NA, 0.3592, NA, NA, 0.4222, NA, 0.3325, NA, 0.3396, NA, 0.2239)
+electiontr <- data.frame(electiontr_year, electiontr_perc)
+colnames(electiontr) <- c("Year", "Percentage")
+
+electiontr$Percentage_interpolated <- na.approx(electiontr$Percentage, na.rm = FALSE)
+
+electiontr$Label <- ifelse(!is.na(electiontr$Percentage),
+                           scales::percent(electiontr$Percentage), NA)
+
+ggplot(data = electiontr, aes(x = Year)) +
+  geom_line(aes(y = Percentage_interpolated),
+            color = "turquoise3",
+            linewidth = 1.5) +  
+  geom_point(data = subset(electiontr,
+                           !is.na(Percentage)),
+             aes(y = Percentage),
+             na.rm = TRUE) + 
+  geom_text_repel(data = subset(electiontr,
+                                !is.na(Percentage)),
+                  aes(y = Percentage,
+                      label = Label),
+                  vjust = -1,
+                  size = 3) +
+  scale_x_continuous(breaks = seq(min(electiontr$Year),
+                                  max(electiontr$Year),
+                                  by = 1)) +
+  scale_y_continuous(labels = scales::percent, limits = c(0.2, 0.5)) +
+  ggtitle("Confianza en elecciones en Perú, por año (porcentaje)") +
+  xlab("Año") +
+  ylab("Porcentaje de confianza") +
+  theme(plot.margin = margin(20, 10, 10, 10))
+```
+
+```{r}
+#Recoding for easier initial exploratory analysis
+LAPOP_2019dic <- LAPOP_2019 %>% mutate(b47a = recode(as.numeric(b47a),
+                                                     "1" = 0,
+                                                     "2" = 0,
+                                                     "3" = 0,
+                                                     "4" = 0,
+                                                     "5" = 1,
+                                                     "6" = 1,
+                                                     "7" = 1))
+LAPOP_2021dic <- LAPOP_2021 %>% mutate(b47a = recode(as.numeric(b47a),
+                                                     "1" = 0,
+                                                     "2" = 0,
+                                                     "3" = 0,
+                                                     "4" = 0,
+                                                     "5" = 1,
+                                                     "6" = 1,
+                                                     "7" = 1))
+LAPOP_2021dic <- LAPOP_2021dic %>% mutate(covid2at = recode(as.numeric(covid2at),
+                                                         "1" = 1,
+                                                         "2" = 1,
+                                                         "3" = 0,
+                                                         "4" = 0))
+LAPOP_2023dic <- LAPOP_2023 %>% mutate(b47a = recode(as.numeric(b47a),
+                                                     "1" = 0,
+                                                     "2" = 0,
+                                                     "3" = 0,
+                                                     "4" = 0,
+                                                     "5" = 1,
+                                                     "6" = 1,
+                                                     "7" = 1))
+```
+
+```{r}
+ggplot(subset(LAPOP_2021dic,
+              b47a %in% c(0,1))) +
+  aes(x = as.factor(b47a),
+      y = q2,
+      group = as.factor(b47a),
+      fill = as.factor(b47a)) +
+  scale_x_discrete(
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3")
+  ) +
+  geom_boxplot() +
+  ggtitle("Confianza en elecciones por edad, 2021") +
+  xlab("Confianza en elecciones") +
+  ylab("Edad") +
+  theme(legend.position = "none")
+#Checking if distribution is apparently different
+
+hist(subset(LAPOP_2021dic,
+            b47a == 0)$q2,
+     main = "No confía por edad",
+     xlab = "Edad",
+     ylab = "Frecuencia")
+
+hist(subset(LAPOP_2021dic,
+            b47a == 1)$q2,
+     main = "Confía por edad",
+     xlab = "Edad",
+     ylab = "Frecuencia")
+
+shapiro.test(subset(LAPOP_2021dic,
+                    b47a == 0)$q2) #Not normal dist., to be expected because of 18 y/o cut
+
+shapiro.test(subset(LAPOP_2021dic,
+                    b47a == 1)$q2) #Same here
+
+L2021D_age_tr <- wilcox.test(q2 ~ b47a,
+                             data = LAPOP_2021dic)
+
+L2021D_age_tr
+#Model IS SIGNIFICATIVE
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2021dic,
+                     b47a %in% c(0,1)),
+              q1tb !=3)) +
+  aes(x = as.factor(q1tb),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1" = "Masculino",
+               "2" = "Femenino")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  ) +
+  labs(fill = "Confianza") +
+  ggtitle("Confianza en elecciones por género, 2021") +
+  xlab("Género") +
+  ylab("Conteo porcentual")
+
+L2021D_gender_tr <- chisq.test(subset(subset(LAPOP_2021dic,
+                                             b47a %in% c(0,1)),
+                                      q1tb !=3)$q1tb,
+                               subset(subset(LAPOP_2021dic,
+                                             b47a %in% c(0,1)),
+                                      q1tb !=3)$b47a)
+
+L2021D_gender_tr
+#Model IS SIGNIFICATIVE
+
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2021dic,
+                     b47a %in% c(0,1)),
+              !(estratopri %in% NA))) +
+  aes(x = as.factor(estratopri),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1101" = "Costa N",
+               "1102" = "Costa S",
+               "1103" = "Lima",
+               "1104" = "Selva",
+               "1105" = "Sierra C",
+               "1106" = "Sierra N",
+               "1107" = "Sierra S")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  )  +
+  ggtitle("Confianza en elecciones por macrorregión, 2021") +
+  xlab("Macrorregión") +
+  ylab("Conteo porcentual") +
+  labs(fill = "Confianza")
+
+L2021D_region_tr <- chisq.test(table(subset(subset(LAPOP_2021dic,
+                                                   b47a %in% c(0,1)),
+                                            !(estratopri %in% NA))$estratopri,
+                                     subset(subset(LAPOP_2021dic,
+                                                   b47a %in% c(0,1)),
+                                            !(estratopri %in% NA))$b47a))
+
+L2021D_region_tr #NOT RELEVANT
+```
+
+
+```{r}
+ggplot(subset(LAPOP_2021dic,
+              b47a %in% c(0,1))) +
+  aes(x = as.factor(ur1new),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") #Testing for type of zone
+
+L2021D_zone_tr <- chisq.test(table(LAPOP_2021dic$ur1new,
+                                   LAPOP_2021dic$b47a))
+
+L2021D_zone_tr #NOT SIGNIFICATIVE
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2021dic,
+                     b47a %in% c(0,1)),
+              a4 %in% c(1,13,71))) + 
+  aes(x = as.factor(a4),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") #Testing for Covid, corruption and the economy
+
+L2021D_problem_tr <- chisq.test(table(subset(subset(LAPOP_2021dic,
+                                                    b47a %in% c(0,1)),
+                                             a4 %in% c(1,13,71))$a4,
+                                      subset(subset(LAPOP_2021dic,
+                                                    b47a %in% c(0,1)),
+                                             a4 %in% c(1,13,71))$b47a))
+
+L2021D_problem_tr #NOT SIGNIFICATIVE
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2021dic,
+                     b47a %in% c(0,1)),
+              covid2at %in% c(0,1))) +
+  aes(x = as.factor(covid2at),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill")
+
+L2021D_COVworry_tr <- chisq.test(table(subset(subset(LAPOP_2021dic,
+                                                     b47a %in% c(0,1)),
+                                              covid2at %in% c(0,1))$covid2at,
+                                       subset(subset(LAPOP_2021dic,
+                                                     b47a %in% c(0,1)),
+                                              covid2at %in% c(0,1))$b47a))
+
+L2021D_COVworry_tr #NOT SIGNIFICATIVE
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2021dic,
+                     b47a %in% c(0,1)),
+              countfair1 %in% c(1,2,3))) +
+  aes(x = as.factor(countfair1),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1" = "Siempre justo",
+               "2" = "A veces justo",
+               "3" = "Nunca justo")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  )  +
+  ggtitle("Confianza en elecciones por percepción \nsobre si el conteo de votos es justo, 2021") +
+  xlab("Percepción sobre si el conteo de votos es justo") +
+  ylab("Conteo porcentual") +
+  labs(fill = "Confianza")
+
+L2021D_faircount_tr <- chisq.test(table(subset(subset(LAPOP_2021dic,
+                                                     b47a %in% c(0,1)),
+                                              countfair1 %in% c(1,2,3))$countfair1,
+                                       subset(subset(LAPOP_2021dic,
+                                                     b47a %in% c(0,1)),
+                                              countfair1 %in% c(1,2,3))$b47a))
+
+L2021D_faircount_tr #SIGNIFICATIVE
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2021dic,
+                     b47a %in% c(0,1)),
+              countfair2 %in% c(1,2,3))) +
+  aes(x = as.factor(countfair2),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1" = "Siempre",
+               "2" = "A veces",
+               "3" = "Nunca")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  )  +
+  ggtitle("Confianza en elecciones por percepción sobre \nsi los ricos compran las elecciones, 2021") +
+  xlab("Percepción sobre si los ricos compran las elecciones") +
+  ylab("Conteo porcentual") +
+  labs(fill = "Confianza")
+
+L2021D_richcount_tr <- chisq.test(table(subset(subset(LAPOP_2021dic,
+                                                     b47a %in% c(0,1)),
+                                              countfair2 %in% c(1,2,3))$countfair2,
+                                       subset(subset(LAPOP_2021dic,
+                                                     b47a %in% c(0,1)),
+                                              countfair2 %in% c(1,2,3))$b47a))
+
+L2021D_richcount_tr #SIGNIFICATIVE
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2021dic,
+                     b47a %in% c(0,1)),
+              countfair3 %in% c(1,2,3))) +
+  aes(x = as.factor(countfair3),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1" = "Nunca es secreto",
+               "2" = "A veces es secreto",
+               "3" = "Siempre es secreto") #Reinterpreted for ease of presentation
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  )  +
+  ggtitle("Confianza en elecciones por percepción sobre \nsi el voto es secreto, 2021") +
+  xlab("Percepción sobre si el voto es secreto") +
+  ylab("Conteo porcentual") +
+  labs(fill = "Confianza")
+
+L2021D_secrvote_tr <- chisq.test(table(subset(subset(LAPOP_2021dic,
+                                                     b47a %in% c(0,1)),
+                                              countfair3 %in% c(1,2,3))$countfair3,
+                                       subset(subset(LAPOP_2021dic,
+                                                     b47a %in% c(0,1)),
+                                              countfair3 %in% c(1,2,3))$b47a))
+
+L2021D_secrvote_tr #SIGNIFICATIVE AND VERY UNEXPECTED
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2021dic,
+                     b47a %in% c(0,1)),
+              countfair4 %in% c(1,2,3))) +
+  aes(x = as.factor(countfair4),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1" = "Siempre pueden \ninfluir",
+               "2" = "A veces pueden \ninfluir",
+               "3" = "Nunca pueden \ninfluir")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  )  +
+  ggtitle("Confianza en elecciones por percepción de \ninfluencia extranjera en elecciones, 2021") +
+  xlab("Percepción de influencia \nextranjera en elecciones") +
+  ylab("Conteo porcentual") +
+  labs(fill = "Confianza")
+
+L2021D_forinfl_tr <- chisq.test(table(subset(subset(LAPOP_2021dic,
+                                                     b47a %in% c(0,1)),
+                                              countfair4 %in% c(1,2,3))$countfair4,
+                                       subset(subset(LAPOP_2021dic,
+                                                     b47a %in% c(0,1)),
+                                              countfair4 %in% c(1,2,3))$b47a))
+
+L2021D_forinfl_tr #SIGNIFICATIVE
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2021dic,
+                     b47a %in% c(0,1)),
+              drr1 %in% c(1,2))) +
+  aes(x = as.factor(drr1),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1" = "Afectado",
+               "2" = "No afectado")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  )  +
+  ggtitle("Confianza en elecciones según si ha sido \nafectado por desastre natural, 2021") +
+  xlab("¿Ha sido afectado por \nun desastre natural?") +
+  ylab("Conteo porcentual") +
+  labs(fill = "Confianza")
+
+L2021D_naturdis_tr <- chisq.test(table(subset(subset(LAPOP_2021dic,
+                                                     b47a %in% c(0,1)),
+                                              drr1 %in% c(1,2))$drr1,
+                                       subset(subset(LAPOP_2021dic,
+                                                     b47a %in% c(0,1)),
+                                              drr1 %in% c(1,2))$b47a))
+
+L2021D_naturdis_tr #NOT significative
+```
+
+```{r}
+ggplot(subset(LAPOP_2021dic,
+              b47a %in% c(0,1))) +
+  aes(x = as.factor(b47a),
+      y = drr1a,
+      group = as.factor(b47a),
+      fill = as.factor(b47a)) +
+  scale_x_discrete(
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3")
+  ) +
+  geom_boxplot() +
+  ggtitle("Confianza en elecciones por año de ocurrencia \nde desastre natural, 2021") +
+  xlab("Confianza en elecciones") +
+  ylab("Año de ocurrencia de desastre natural") +
+  theme(legend.position = "none")
+#Checking if distribution is apparently different
+
+hist(subset(LAPOP_2021dic,
+            b47a == 0)$q2,
+     main = "No confía por año de ocurrencia de desastre natural",
+     xlab = "Año de ocurrencia de desastre natural",
+     ylab = "Frecuencia")
+
+hist(subset(LAPOP_2021dic,
+            b47a == 1)$q2,
+     main = "Confía por año de ocurrencia de desastre natural",
+     xlab = "Adad",
+     ylab = "Frecuencia")
+
+shapiro.test(subset(LAPOP_2021dic,
+                    b47a == 0)$drr1a) #Not normal dist., to be expected because of years cut
+
+shapiro.test(subset(LAPOP_2021dic,
+                    b47a == 1)$drr1a) #Same here
+
+L2021D_ynaturdis_tr <- wilcox.test(drr1a ~ b47a,
+                             data = LAPOP_2021dic)
+
+L2021D_ynaturdis_tr
+#Model is NOT significative
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2021dic,
+                     b47a %in% c(0,1)),
+              ing4 %in% c(1,2,3,4,5,6,7))) +
+  aes(x = as.factor(ing4),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1" = "Muy en \ndesacuerdo",
+               "2" = "2",
+               "3" = "3",
+               "4" = "4",
+               "5" = "5",
+               "6" = "6",
+               "7" = "Muy de \nacuerdo")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  )  +
+  ggtitle("Confianza en elecciones por preferencia por la democracia, 2021") +
+  xlab("Preferencia por la democracia") +
+  ylab("Conteo porcentual") +
+  labs(fill = "Confianza")
+
+L2021D_dempref_tr <- chisq.test(table(subset(subset(LAPOP_2021dic,
+                                                    b47a %in% c(0,1)),
+                                             ing4 %in% c(1,2,3,4,5,6,7))$ing4,
+                                      subset(subset(LAPOP_2021dic,
+                                                    b47a %in% c(0,1)),
+                                             ing4 %in% c(1,2,3,4,5,6,7))$b47a))
+
+L2021D_dempref_tr #HIGHLY SIGNIFICATIVE
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2021dic,
+                     b47a %in% c(0,1)),
+              pn4 %in% c(1,2,3,4))) +
+  aes(x = as.factor(pn4),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1" = "Muy satisfecho",
+               "2" = "Satisfecho",
+               "3" = "Insatisfecho",
+               "4" = "Muy insatisfecho")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  )  +
+  ggtitle("Confianza en elecciones por \nsatisfacción con la democracia, 2021") +
+  xlab("Satisfacción con la democracia") +
+  ylab("Conteo porcentual") +
+  labs(fill = "Confianza")
+
+L2021D_demsat_tr <- chisq.test(table(subset(subset(LAPOP_2021dic,
+                                                     b47a %in% c(0,1)),
+                                              pn4 %in% c(1,2,3,4))$pn4,
+                                       subset(subset(LAPOP_2021dic,
+                                                     b47a %in% c(0,1)),
+                                              pn4 %in% c(1,2,3,4))$b47a))
+
+L2021D_demsat_tr #HIGHLY SIGNIFICATIVE
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2021dic,
+                     b47a %in% c(0,1)),
+              edr %in% c(0,1,2,3))) +
+  aes(x = as.factor(edr),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill")
+
+L2021D_edu_tr <- chisq.test(table(subset(subset(LAPOP_2021dic,
+                                                b47a %in% c(0,1)),
+                                         edr %in% c(0,1,2,3))$edr,
+                                  subset(subset(LAPOP_2021dic,
+                                                b47a %in% c(0,1)),
+                                         edr %in% c(0,1,2,3))$b47a))
+
+L2021D_edu_tr #NOT SIGNIFICATIVE
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2021dic,
+                     b47a %in% c(0,1)),
+              !(etid %in% c(888888,988888,NA)))) +
+  aes(x = as.factor(etid),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1" = "Blanca",
+               "2" = "Mestiza",
+               "1110" = "Quechua",
+               "1111" = "Aymara",
+               "1112" = "Amazónico",
+               "4" = "Negra",
+               "5" = "Mulata",
+               "1113" = "Zamba",
+               "1106" = "Oriental",
+               "7" = "Otra")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  )  +
+  ggtitle("Confianza en elecciones por autoidentificación étnica, 2021") +
+  xlab("Autoidentificación étnica") +
+  ylab("Conteo porcentual") +
+  labs(fill = "Confianza")
+
+L2021D_ethnic_tr <- chisq.test(table(subset(subset(LAPOP_2021dic,
+                                                   b47a %in% c(0,1)),
+                                            !(etid %in% c(888888,988888,NA)))$etid,
+                               subset(subset(LAPOP_2021dic,
+                                             b47a %in% c(0,1)),
+                                      !(etid %in% c(888888,988888,NA)))$b47a))
+
+L2021D_ethnic_tr
+```
+
+```{r}
+#RECODE TO SIMPLIFY
+
+LAPOP_2021dic <- LAPOP_2021dic %>% mutate(etid = recode(as.factor(etid),
+                                                        "1" = "Blanca",
+                                                        "2" = "Mestiza",
+                                                        "4" = "Afroperuana",
+                                                        "5" = "Afroperuana",
+                                                        "1110" = "Andina",
+                                                        "1111" = "Andina",
+                                                        "1112" = "Amazónica",
+                                                        "1113" = "Afroperuana",
+                                                        "7" = "Otra",
+                                                        "1106" = "Otra"))
+
+ggplot(subset(subset(LAPOP_2021dic,
+                     b47a %in% c(0,1)),
+              !(etid %in% c(888888,988888,NA)))) +
+  aes(x = as.factor(etid),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("Blanca" = "Blanca",
+               "Mestiza" = "Mestiza",
+               "Andina" = "Andina",
+               "Afroperuana" = "Afroperuana",
+               "Amazónica" = "Amazónica",
+               "Otra" = "Otra")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  )  +
+  ggtitle("Confianza en elecciones por autoidentificación étnica, 2021") +
+  xlab("Autoidentificación étnica") +
+  ylab("Conteo porcentual") +
+  labs(fill = "Confianza")
+
+L2021D_ethnic_tr2 <- chisq.test(table(subset(subset(LAPOP_2021dic,
+                                                   b47a %in% c(0,1)),
+                                            !(etid %in% c(888888,988888,NA)))$etid,
+                               subset(subset(LAPOP_2021dic,
+                                             b47a %in% c(0,1)),
+                                      !(etid %in% c(888888,988888,NA)))$b47a))
+
+L2021D_ethnic_tr2 #CONFIRMED, NOT RELEVANT
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(estratopri %in% NA))) +
+  aes(x = as.factor(estratopri),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1101" = "Costa N",
+               "1102" = "Costa S",
+               "1103" = "Lima",
+               "1104" = "Selva",
+               "1105" = "Sierra C",
+               "1106" = "Sierra N",
+               "1107" = "Sierra S")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  )  +
+  ggtitle("Confianza en elecciones por macrorregión, 2023") +
+  xlab("Macrorregión") +
+  ylab("Conteo porcentual") +
+  labs(fill = "Confianza")
+
+L2023D_region_tr <- chisq.test(table(subset(subset(LAPOP_2023dic,
+                                                   b47a %in% c(0,1)),
+                                            !(estratopri %in% NA))$estratopri,
+                                     subset(subset(LAPOP_2023dic,
+                                                   b47a %in% c(0,1)),
+                                            !(estratopri %in% NA))$b47a))
+
+L2023D_region_tr #RELEVANT
+```
+
+```{r}
+ggplot(subset(LAPOP_2023dic,
+              b47a %in% c(0,1))) +
+  aes(x = as.factor(ur),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1" = "Urbano",
+               "2" = "Rural")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  )  +
+  ggtitle("Confianza en elecciones por ámbito, 2023") +
+  xlab("Ámbito") +
+  ylab("Conteo porcentual") +
+  labs(fill = "Confianza")
+
+L2023D_zone_tr <- chisq.test(table(subset(LAPOP_2023dic,
+              b47a %in% c(0,1))$ur,
+                                     subset(LAPOP_2023dic,
+              b47a %in% c(0,1))$b47a))
+
+L2023D_zone_tr #RELEVANT, UNEXPECTED
+```
+
+```{r}
+ggplot(subset(LAPOP_2023dic,
+              b47a %in% c(0,1))) +
+  aes(x = as.factor(b47a),
+      y = q2,
+      group = as.factor(b47a),
+      fill = as.factor(b47a)) +
+  scale_x_discrete(
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3")
+  ) +
+  geom_boxplot() +
+  ggtitle("Confianza en elecciones por edad, 2023") +
+  xlab("Confianza en elecciones") +
+  ylab("Edad") +
+  theme(legend.position = "none")
+#Checking if distribution is apparently different
+
+hist(subset(LAPOP_2023dic,
+            b47a == 0)$q2,
+     main = "No confía por edad",
+     xlab = "Edad",
+     ylab = "Frecuencia")
+
+hist(subset(LAPOP_2023dic,
+            b47a == 1)$q2,
+     main = "Confía por edad",
+     xlab = "Edad",
+     ylab = "Frecuencia")
+
+shapiro.test(subset(LAPOP_2023dic,
+                    b47a == 0)$q2) #Not normal dist., to be expected because of 18 y/o cut
+
+shapiro.test(subset(LAPOP_2023dic,
+                    b47a == 1)$q2) #Same here
+
+L2023D_age_tr <- wilcox.test(q2 ~ b47a,
+                             data = LAPOP_2023dic)
+
+L2023D_age_tr #NOT RELEVANT
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              q1tc_r !=3)) +
+  aes(x = as.factor(q1tc_r),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1" = "Masculino",
+               "2" = "Femenino")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  ) +
+  labs(fill = "Confianza") +
+  ggtitle("Confianza en elecciones por género, 2023") +
+  xlab("Género") +
+  ylab("Conteo porcentual")
+
+L2023D_gender_tr <- chisq.test(table(subset(subset(LAPOP_2023dic,
+                                             b47a %in% c(0,1)),
+                                      q1tc_r !=3)$q1tc_r,
+                               subset(subset(LAPOP_2023dic,
+                                             b47a %in% c(0,1)),
+                                      q1tc_r !=3)$b47a))
+
+L2023D_gender_tr #STILL SIGNIFICANT
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              a4n %in% c(1,2,4,6,77))) +
+  aes(x = as.factor(a4n),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1" = "Economía",
+               "2" = "Seguridad",
+               "4" = "Política",
+               "6" = "Corrupción",
+               "77" = "Otros")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  ) +
+  labs(fill = "Confianza") +
+  ggtitle("Confianza en elecciones por mayor problema, 2023") +
+  xlab("Mayor problema") +
+  ylab("Conteo porcentual")
+
+L2023D_problem_tr <- chisq.test(table(subset(subset(LAPOP_2023dic,
+                                                    b47a %in% c(0,1)),
+                                             a4n %in% c(1,2,4,6,77))$a4n,
+                                      subset(subset(LAPOP_2023dic,
+                                                    b47a %in% c(0,1)),
+                                             a4n %in% c(1,2,4,6,77))$b47a))
+
+L2023D_problem_tr #NOT RELEVANT
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(l1n %in% c(888888,988888,NA)))) +
+  aes(x = as.factor(l1n),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1" = "Izq.",
+               "10" = "Der.")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  ) +
+  labs(fill = "Confianza") +
+  ggtitle("Confianza en elecciones por escala ideológica, 2023") +
+  xlab("Escala ideológica") +
+  ylab("Conteo porcentual")
+
+L2023D_ideo_tr <- chisq.test(table(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(l1n %in% c(888888,988888,NA)))$l1n,
+                               subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(l1n %in% c(888888,988888,NA)))$b47a))
+
+L2023D_ideo_tr #RELEVANT
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(countfair1 %in% c(888888,988888,NA)))) +
+  aes(x = as.factor(countfair1),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1" = "Siempre justo",
+               "2" = "A veces justo",
+               "3" = "Nunca justo")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  ) +
+  labs(fill = "Confianza") +
+  ggtitle("Confianza en elecciones por percepción de conteo justo, 2023") +
+  xlab("Percepción de conteo justo") +
+  ylab("Conteo porcentual")
+
+L2023D_faircount_tr <- chisq.test(table(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(countfair1 %in% c(888888,988888,NA)))$countfair1,
+                               subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(countfair1 %in% c(888888,988888,NA)))$b47a))
+
+L2023D_faircount_tr #RELEVANT
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(countfair3 %in% c(888888,988888,NA)))) +
+  aes(x = as.factor(countfair3),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1" = "Nunca secreto",
+               "2" = "A veces secreto",
+               "3" = "Siempre secreto")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  ) +
+  labs(fill = "Confianza") +
+  ggtitle("Confianza en elecciones por percepción de secreto del voto, 2023") +
+  xlab("Percepción de secreto del voto") +
+  ylab("Conteo porcentual")
+
+L2023D_secrvote_tr <- chisq.test(table(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(countfair3 %in% c(888888,988888,NA)))$countfair3,
+                               subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(countfair3 %in% c(888888,988888,NA)))$b47a))
+
+L2023D_secrvote_tr #RELEVANT
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(pn4 %in% c(888888,988888,NA)))) +
+  aes(x = as.factor(pn4),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1" = "Muy satisfecho",
+               "2" = "Satisfecho",
+               "3" = "Insatisfecho",
+               "4" = "Muy insatisfecho")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  ) +
+  labs(fill = "Confianza") +
+  ggtitle("Confianza en elecciones por satisfacción con democracia, 2023") +
+  xlab("Satisfacción con democracia") +
+  ylab("Conteo porcentual")
+
+L2023D_demsat_tr <- chisq.test(table(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(pn4 %in% c(888888,988888,NA)))$pn4,
+                               subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(pn4 %in% c(888888,988888,NA)))$b47a))
+
+L2023D_demsat_tr #RELEVANT
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(exc7 %in% c(888888,988888,NA)))) +
+  aes(x = as.factor(exc7),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1" = "Mucha",
+               "2" = "Algo",
+               "3" = "Poca",
+               "4" = "Nada")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  ) +
+  labs(fill = "Confianza") +
+  ggtitle("Confianza en elecciones por percepción \nde corrupción en funcionarios, 2023") +
+  xlab("Percepción de corrupción en funcionarios") +
+  ylab("Conteo porcentual")
+
+L2023D_corrper_tr <- chisq.test(table(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(exc7 %in% c(888888,988888,NA)))$exc7,
+                               subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(exc7 %in% c(888888,988888,NA)))$b47a))
+
+L2023D_corrper_tr #RELEVANT, weird behaviour
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              vb3n %in% c(1101, 1102, 1103, 1104, 1105))) +
+  aes(x = as.factor(vb3n),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1101" = "P. Castillo",
+               "1102" = "K. Fujimori",
+               "1103" = "R. López-A.",
+               "1104" = "H. de Soto",
+               "1105" = "Y. Lescano")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  ) +
+  labs(fill = "Confianza") +
+  ggtitle("Confianza en elecciones por opción de voto el 2021, 2023") +
+  xlab("Opción de voto el 2021, 2023") +
+  ylab("Conteo porcentual")
+
+L2023D_2021vote_tr <- chisq.test(table(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              vb3n %in% c(1101, 1102, 1103, 1104, 1105))$vb3n,
+                               subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              vb3n %in% c(1101, 1102, 1103, 1104, 1105))$b47a))
+
+L2023D_2021vote_tr #RELEVANT, VERY INTERESTING
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(dis11 %in% c(88888,988888,NA)))) +
+  aes(x = as.factor(dis11),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1" = "Muchas veces",
+               "2" = "Algunas veces",
+               "3" = "Pocas veces",
+               "4" = "Nunca")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  ) +
+  labs(fill = "Confianza") +
+  ggtitle("Confianza en elecciones por cuán discriminado \nes por color de piel, 2023") +
+  xlab("Discriminación por color de piel") +
+  ylab("Conteo porcentual")
+
+L2023D_racedis_tr <- chisq.test(table(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(dis11 %in% c(88888,988888,NA)))$dis11,
+                               subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(dis11 %in% c(88888,988888,NA)))$b47a))
+
+L2023D_racedis_tr #RELEVANT
+```
+
+```{r}
+ggplot(subset(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(dis12 %in% c(88888,988888,NA))),
+       q1tc_r == 2)) +
+  aes(x = as.factor(dis12),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1" = "Muchas veces",
+               "2" = "Algunas veces",
+               "3" = "Pocas veces",
+               "4" = "Nunca")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  ) +
+  labs(fill = "Confianza") +
+  ggtitle("Confianza en elecciones por cuán discriminada \nes una mujer por su género, 2023") +
+  xlab("Discriminación por género") +
+  ylab("Conteo porcentual")
+
+L2023D_gendis_tr <- chisq.test(table((subset(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(dis12 %in% c(88888,988888,NA))),
+       q1tc_r == 2))$dis12,
+                               (subset(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(dis12 %in% c(88888,988888,NA))),
+       q1tc_r == 2)$b47a)))
+
+L2023D_gendis_tr #RELEVANT
+```
+```{r}
+ggplot(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(edre %in% c(88888,988888,NA)))) +
+  aes(x = as.factor(edre),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("0" = "Ninguna",
+               "1" = "Primaria \nincompleta",
+               "2" = "Primaria \ncompleta",
+               "3" = "Secundaria \nincompleta",
+               "4" = "Secundaria \ncompleta",
+               "5" = "Superior \n incompleta",
+               "6" = "Superior \ncompleta")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  ) +
+  labs(fill = "Confianza") +
+  ggtitle("Confianza en elecciones por nivel educativo, 2023") +
+  xlab("Nivel educativo") +
+  ylab("Conteo porcentual")
+
+L2023D_edu_tr <- chisq.test(table(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(edre %in% c(88888,988888,NA)))$edre,
+                               subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(edre %in% c(88888,988888,NA)))$b47a))
+
+L2023D_edu_tr #RELEVANT
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              q3cn %in% c(1,2,4,5,11,77))) +
+  aes(x = as.factor(q3cn),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1" = "Católico",
+               "2" = "Protestante no \nevangélico",
+               "4" = "Deísta",
+               "5" = "Evangélico y\n pentecostal",
+               "11" = "Agnóstico \no ateo",
+               "77" = "Otro")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  ) +
+  labs(fill = "Confianza") +
+  ggtitle("Confianza en elecciones por religión, 2023") +
+  xlab("Religión") +
+  ylab("Conteo porcentual")
+
+L2023D_relig_tr <- chisq.test(table(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              q3cn %in% c(1,2,4,5,11,77))$q3cn,
+                               subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              q3cn %in% c(1,2,4,5,11,77))$b47a))
+
+L2023D_relig_tr #NOT RELEVANT
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(q10inc %in% c(88888,988888,NA)))) +
+  aes(x = as.factor(q10inc),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1101" = "S/ 0 a \nS/200",
+               "1102" = "S/201 a \nS/350",
+               "1103" = "S/351 a \nS/635",
+               "1104" = "S/636 a \nS/800",
+               "1105" = "S/801 a \nS/980",
+               "1106" = "S/981 a \nS/1100",
+               "1107" = "S/1101 a \nS/1294",
+               "1108" = "S/1295 a \nS/1500",
+               "1109" = "S/1501 a \nS/1611",
+               "1110" = "S/1612 a \nS/1962",
+               "1111" = "S/1963 a \nS/2399",
+               "1112" = "S/2400 a \nS/2929",
+               "1113" = "S/2930 a \nS/3708",
+               "1114" = "S/3709 a \nS/5136",
+               "1115" = "Más de \nS/5136")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  ) +
+  labs(fill = "Confianza") +
+  ggtitle("Confianza en elecciones por ingreso familiar mensual, 2023") +
+  xlab("Ingreso familiar mensual") +
+  ylab("Conteo porcentual") +
+  theme(axis.text.x = element_text(angle = 90,
+                                   vjust = 0.5,
+                                   hjust = 1))
+
+L2023D_income_tr <- chisq.test(table(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(q10inc %in% c(88888,988888,NA)))$q10inc,
+                               subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(q10inc %in% c(88888,988888,NA)))$b47a))
+
+L2023D_income_tr #BARELY MISSES THE MARK, NOT RELEVANT
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              q10d %in% c(1,2,3,4))) +
+  aes(x = as.factor(q10d),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1" = "Alcanzan y puede \nahorrar",
+               "2" = "Alcanzan",
+               "3" = "No alcanzan",
+               "4" = "No alcanzan y tienen \ngrandes dificultades")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  ) +
+  labs(fill = "Confianza") +
+  ggtitle("Confianza en elecciones por si alcanzan los ingresos, 2023") +
+  xlab("Si alcanzan los ingresos") +
+  ylab("Conteo porcentual")
+
+L2023D_incomesuff_tr <- chisq.test(table(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              q10d %in% c(1,2,3,4))$q10d,
+                               subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              q10d %in% c(1,2,3,4))$b47a))
+
+L2023D_incomesuff_tr #IRRELEVANT
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(etid %in% c(888888,988888,NA)))) +
+  aes(x = as.factor(etid),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1" = "Blanca",
+               "2" = "Mestiza",
+               "1110" = "Quechua",
+               "1111" = "Aymara",
+               "1112" = "Amazónico",
+               "4" = "Negra",
+               "5" = "Mulata",
+               "1113" = "Zamba",
+               "1106" = "Oriental",
+               "7" = "Otra")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  )  +
+  ggtitle("Confianza en elecciones por autoidentificación étnica, 2023") +
+  xlab("Autoidentificación étnica") +
+  ylab("Conteo porcentual") +
+  labs(fill = "Confianza")
+
+L2023D_ethnic_tr <- chisq.test(table(subset(subset(LAPOP_2023dic,
+                                                   b47a %in% c(0,1)),
+                                            !(etid %in% c(888888,988888,NA)))$etid,
+                               subset(subset(LAPOP_2023dic,
+                                             b47a %in% c(0,1)),
+                                      !(etid %in% c(888888,988888,NA)))$b47a))
+
+L2023D_ethnic_tr
+```
+
+```{r}
+#RECODE TO SIMPLIFY
+
+LAPOP_2023dic <- LAPOP_2023dic %>% mutate(etid = recode(as.factor(etid),
+                                                        "1" = "Blanca",
+                                                        "2" = "Mestiza",
+                                                        "4" = "Afroperuana",
+                                                        "5" = "Afroperuana",
+                                                        "1110" = "Andina",
+                                                        "1111" = "Andina",
+                                                        "1112" = "Amazónica",
+                                                        "1113" = "Afroperuana",
+                                                        "7" = "Otra",
+                                                        "1106" = "Otra"))
+
+ggplot(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(etid %in% c(888888,988888,NA)))) +
+  aes(x = as.factor(etid),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("Blanca" = "Blanca",
+               "Mestiza" = "Mestiza",
+               "Andina" = "Andina",
+               "Afroperuana" = "Afroperuana",
+               "Amazónica" = "Amazónica",
+               "Otra" = "Otra")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  )  +
+  ggtitle("Confianza en elecciones por autoidentificación étnica, 2023") +
+  xlab("Autoidentificación étnica") +
+  ylab("Conteo porcentual") +
+  labs(fill = "Confianza")
+
+L2023D_ethnic_tr2 <- chisq.test(table(subset(subset(LAPOP_2023dic,
+                                                   b47a %in% c(0,1)),
+                                            !(etid %in% c(888888,988888,NA)))$etid,
+                               subset(subset(LAPOP_2023dic,
+                                             b47a %in% c(0,1)),
+                                      !(etid %in% c(888888,988888,NA)))$b47a))
+
+L2023D_ethnic_tr2 #CONFIRMED, NOT RELEVANT
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              leng1 %in% c(1101,1102,1103))) +
+  aes(x = as.factor(leng1),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(
+    labels = c("1101" = "Castellano",
+               "1102" = "Quechua",
+               "1103" = "Aymara")
+  ) +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  )  +
+  ggtitle("Confianza en elecciones por lengua materna, 2023") +
+  xlab("Lengua materna") +
+  ylab("Conteo porcentual") +
+  labs(fill = "Confianza")
+
+L2023D_matlang_tr <- chisq.test(table(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              leng1 %in% c(1101,1102,1103))$leng1,
+                               subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              leng1 %in% c(1101,1102,1103))$b47a))
+
+L2023D_matlang_tr #IRRELEVANT
+```
+
+```{r}
+ggplot(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(colorr %in% c(97)))) +
+  aes(x = as.factor(colorr),
+      fill = as.factor(b47a)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(
+    values = c("0" = "coral2",
+               "1" = "turquoise3"),
+    labels = c("0" = "No confía",
+               "1" = "Confía")
+  )  +
+  ggtitle("Confianza en elecciones por color de piel \nregistrado por entrevistador, 2023") +
+  xlab("Color de piel registrado por entrevistador") +
+  ylab("Conteo porcentual") +
+  labs(fill = "Confianza")
+
+L2023D_skincol_tr <- chisq.test(table(subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(colorr %in% c(97)))$colorr,
+                               subset(subset(LAPOP_2023dic,
+                     b47a %in% c(0,1)),
+              !(colorr %in% c(97)))$b47a))
+
+L2023D_skincol_tr #NOT RELEVANT
+```
+
+
+```{r}
+L2019_gender_tr <- wilcox.test(b47a ~ q1,
+                               data = LAPOP_2019)
+#Evaluates relation between gender and trust in elections
+
+print(L2019_gender_tr) #Relation IS RELEVANT
+
+ggplot(LAPOP_2019,
+       aes(x = q1,
+           y = b47a,
+           group = q1)) +
+  geom_boxplot(fill = c("lightblue",
+                        "lightpink")) +
+  geom_signif(comparisons = list(c(1,2)),
+              map_signif_level = T) +
+  theme_minimal() +
+  labs(title = "Confianza en elecciones por género",
+       x = "Género",
+       y = "Confianza en las elecciones (- a +)")
+```
+
+```{r}
+LAPOP_2019$q2 <- as.numeric(as.character(LAPOP_2019$q2)) #Setting the "age" variable into numeric to fit it into the models
+
+L2019_age_tr <- polr(as.factor(b47a) ~ q2,
+                     data = LAPOP_2019,
+                     Hess = T)
+#Evaluate relation between age and trust in elections
+
+print(cbind(coef(summary(L2019_age_tr)),
+            "p value" = pnorm(abs(coef(summary(L2019_age_tr)))[, "t value"],
+                              lower.tail =  F) *2))
+#Relation NOT SIGNIFICATIVE, differences between levels SIGNIFICANT, somehow
+
+df_L2019_age_tr <- data.frame(q2 = seq(18, 100, by = 1))
+
+pred_df_L2019_age_tr <- melt(cbind(df_L2019_age_tr,
+                                  predict(L2019_age_tr,
+                                          df_L2019_age_tr,
+                                          type = "probs")),
+                            id.vars = "q2",
+                            variable.name = "trust_level",
+                            value.name = "probability")
+
+ggplot(pred_df_L2019_age_tr,
+       aes(x = q2,
+           y = probability,
+           color = trust_level,
+           group = trust_level)) +
+  geom_line(line_width = 1) +
+  theme_minimal() +
+  labs(title = "Probabilidades predichas para confianza en elecciones por edad",
+       x = "Edad",
+       y = "Probabilidad predicha",
+       color = "Nivel de confianza (1 a 7, + a -)") +
+  scale_color_brewer(palette = "Set1")
+
+#Maybe do the cumulative probs graph later
+```
+
+```{r}
+L2019_ideo_trust <- polr(as.factor(l1) ~ b47a,
+                         data = LAPOP_2019,
+                         Hess = T)
+#Evaluates relation between ideology and trust in elections
+
+print(cbind(coef(summary(L2019_ideo_trust)),
+            "p value" = pnorm(abs(coef(summary(L2019_ideo_trust)))[, "t value"],
+                              lower.tail =  F) *2))
+#Relation IS SIGNIFICATIVE, on to calculating predictions per level of trust
+
+df_L2019_id_tr <- data.frame(b47a = seq(min(LAPOP_2019$b47a,
+                                            na.rm = T),
+                                        max(LAPOP_2019$b47a,
+                                            na.rm = T),
+                                        length.out = 100))
+
+pred_df_L2019_id_tr <- melt(cbind(df_L2019_id_tr,
+                                  predict(L2019_ideo_trust,
+                                          df_L2019_id_tr,
+                                          type = "probs")),
+                            id.vars = "b47a",
+                            variable.name = "ideo_align",
+                            value.name = "probability")
+
+ggplot(pred_df_L2019_id_tr,
+       aes(x = b47a,
+           y = probability,
+           color = ideo_align)) +
+  geom_line(linewidth = 1) +
+  theme_minimal() +
+  labs(title = "Probabilidades predichas para alineación ideológica por nivel de confianza en elecciones",
+       x = "Confianza en elecciones (1-7, + a -)",
+       y = "Probabilidad predicha",
+       color = "Alineación ideológica (1 - 10, izq. a der.)") +
+  scale_color_brewer(palette = "Set3")
+```
+
+```{r}
+L2019_v2016_trust <- wilcox.test(b47a ~ vb2,
+                                 data = LAPOP_2019,
+                                 exact = F) 
+#Evaluating relationship between whether someone voted in 2016 and trust in elections
+
+print(L2019_v2016_trust)
+#Relationship is NOT RELEVANT
+```
+
+```{r}
+
+```
+
